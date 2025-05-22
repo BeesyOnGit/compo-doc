@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.98"
 axum = "0.8.4"
 serde = {version = "1.0.219", features =["derive"]}
 serde_json = "1.0.140"
+swc_common = "11.0.0"
+swc_ecma_ast = "11.0.0"
+swc_ecma_codegen = "13.1.0"
+swc_ecma_parser = { version = "14.0.0", features = ["typescript"] }
+swc_ecma_visit = "11.0.0"
 tokio = {version = "1.45.0", features=["full"]}

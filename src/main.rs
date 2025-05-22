@@ -3,7 +3,7 @@ mod utils;
 use std::sync::Arc;
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::Path,
     http::StatusCode,
     response::IntoResponse,
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use utils::{
     handler::{get_component, list_components, setup_config},
-    structs::{AppState, ComponentsList},
+    structs::{AppState, ComponentsList, SharedState},
     utils::{check_dir_exist_or_create, execute_commande},
 };
 
@@ -46,10 +46,11 @@ async fn main() {
 
     // init app that that will store out branch current hash and the component state
 
-    let app_state = AppState {
-        comp_liste: Arc::new(Mutex::new(vec![])),
+    let mut app_state = AppState {
+        comp_liste: Vec::new(),
         curr_ver: String::new(),
     };
+    let state = SharedState::new(app_state.try_into().unwrap());
 
     check_dir_exist_or_create("/etc/compo-doc/config/rand.file");
     check_dir_exist_or_create("/etc/compo-doc/tmp/rand.file");
@@ -58,7 +59,12 @@ async fn main() {
         .route("/config", post(setup_config))
         .route("/components", get(list_components))
         .route("/components/{id}", get(get_component))
-        .with_state(app_state);
+        .layer(Extension(state))
+        .with_state(AppState {
+            comp_liste: Vec::new(),
+            curr_ver: String::new(),
+        });
+    // .with_state(app_state);
 
     // Start server
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

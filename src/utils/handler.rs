@@ -1,23 +1,22 @@
-use std::sync::{Arc, Mutex};
+use axum::{Extension, Json, extract::Path, http::StatusCode, response::IntoResponse};
 
-use axum::{
-    Json,
-    extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
+use crate::utils::{
+    http_utils::json_response_builder, structs::JsonResponse, type_extractor::find_used_type,
 };
 
-use crate::utils::{http_utils::json_response_builder, structs::JsonResponse};
-
 use super::{
-    structs::{AppState, ComponentsList, ConfigContent},
+    structs::{ComponentsList, ConfigContent, SharedState},
+    type_extractor::TypeExtractor,
     utils::{
-        execute_commande, extract_repo_info, list_dir_contents, read_from_file_ut, write_to_file_ut,
+        execute_commande, extract_repo_info, get_new_repo_ver, list_dir_contents,
+        read_from_file_ut, write_to_file_ut,
     },
 };
 
 // API handlers
-pub async fn list_components() -> impl IntoResponse {
+pub async fn list_components(state: Extension<SharedState>) -> impl IntoResponse {
+    let mut state = state.write().await;
+
     // read from config path to get repo link
     let config_content = match read_from_file_ut("/etc/compo-doc/config/config") {
         Ok(res) => res,
@@ -32,7 +31,7 @@ pub async fn list_components() -> impl IntoResponse {
         }
     };
 
-    let (_username, repo, branch) = match extract_repo_info(&config_content) {
+    let (username, repo, branch) = match extract_repo_info(&config_content) {
         Some(res) => res,
         None => {
             return json_response_builder(
@@ -42,7 +41,43 @@ pub async fn list_components() -> impl IntoResponse {
         }
     };
 
-    let files_liste = match list_dir_contents(&format!("/etc/compo-doc/tmp/{}/components", repo)) {
+    let holding_folder = format!("/etc/compo-doc/tmp/{}/components", repo);
+
+    let fetched_version = match execute_commande(&format!(
+        "git ls-remote https://github.com/{}/{}.git {:?}",
+        &username, &repo, &branch
+    )) {
+        Ok(v) => v.trim().split("refs").next().unwrap().to_string(),
+        Err(err) => {
+            print!("{}", err);
+            return json_response_builder(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                JsonResponse::<String>::make_error("Error while checking repo version".to_string()),
+            );
+        }
+    };
+    println!("curr : {}", &state.curr_ver);
+    println!("fetched : {}", &fetched_version);
+
+    if fetched_version != state.curr_ver {
+        let _ = match get_new_repo_ver(&repo, &branch, &username) {
+            Ok(r) => {
+                state.curr_ver = fetched_version;
+                r
+            }
+            Err(err) => {
+                println!("Error occured while cloning repo: {} ", err);
+                return json_response_builder(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    JsonResponse::<String>::make_error(
+                        "Error while checking repo version".to_string(),
+                    ),
+                );
+            }
+        };
+    }
+
+    let files_liste = match list_dir_contents(&holding_folder) {
         Ok(res) => res,
         Err(err) => {
             println!("Error : {}", err);
@@ -57,14 +92,38 @@ pub async fn list_components() -> impl IntoResponse {
     };
 
     let final_liste: Vec<ComponentsList> = files_liste
+        //iterate through the files liste
         .iter()
         .map(|file| -> ComponentsList {
+            // read the current file usinf it's path/name
+            let file_content = match read_from_file_ut(&format!("{holding_folder}/{file}")) {
+                Ok(res) => res,
+                Err(err) => {
+                    println!("{err}");
+                    return ComponentsList {
+                        name: file.to_string(),
+                        is_legacy: false,
+                    };
+                }
+            };
+
+            let mut is_legacy = false;
+
+            // checking for the presence of the legacy flag
+            if file_content.contains("//<legacy") {
+                is_legacy = true
+            }
+
+            // returning the list elements
             return ComponentsList {
                 name: file.to_string(),
-                is_legacy: false,
+                is_legacy,
             };
         })
+        // collecting the iterator into a vector (kind of Array)
         .collect();
+
+    // returnig the response
     return json_response_builder(
         StatusCode::INTERNAL_SERVER_ERROR,
         JsonResponse::<Vec<ComponentsList>>::make_success(
@@ -74,15 +133,59 @@ pub async fn list_components() -> impl IntoResponse {
     );
 }
 
-pub async fn get_component(Path(id): Path<u32>) -> impl IntoResponse {
-    // data::find_component(id).map(Json).ok_or(AppError::NotFound)
-    // return Ok(Component {});
+pub async fn get_component(Path(id): Path<String>) -> impl IntoResponse {
+    let config_content = match read_from_file_ut("/etc/compo-doc/config/config") {
+        Ok(res) => res,
+        Err(err) => {
+            println!("Error : {}", err);
+            return json_response_builder(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                JsonResponse::<String>::make_error(
+                    "could not write the repository to file please try again later".to_string(),
+                ),
+            );
+        }
+    };
+
+    let (username, repo, branch) = match extract_repo_info(&config_content) {
+        Some(res) => res,
+        None => {
+            return json_response_builder(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                JsonResponse::<String>::make_error("could not parse repository url".to_string()),
+            );
+        }
+    };
+
+    let file_path = format!("/etc/compo-doc/tmp/{repo}/components/{id}");
+    println!("{}", file_path);
+
+    let code = match read_from_file_ut(&file_path) {
+        Ok(re) => re,
+        Err(err) => {
+            println!("{}", err);
+            return json_response_builder(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                JsonResponse::<String>::make_error("could read file content".to_string()),
+            );
+        }
+    };
+    let type_name = find_used_type(&code).unwrap().unwrap();
+    let mut extractor = TypeExtractor::new(&type_name);
+    let typing = extractor.extract_from_str(&code).unwrap();
+    println!("{:?}", typing);
+
+    return json_response_builder(
+        StatusCode::OK,
+        JsonResponse::<String>::make_success("repository saved and reached", typing.to_string()),
+    );
 }
 
 pub async fn setup_config(
-    State(state): State<AppState>,
+    state: Extension<SharedState>,
     Json(config): Json<ConfigContent>,
 ) -> impl IntoResponse {
+    let mut shared_state = state.write().await;
     // delete old config
     let _ = execute_commande("rm /etc/compo-doc/config/config");
 
@@ -106,7 +209,7 @@ pub async fn setup_config(
         }
     };
 
-    let (_, repo, branch) = match extract_repo_info(&repo_str) {
+    let (username, repo, branch) = match extract_repo_info(&repo_str) {
         Some(res) => res,
         None => {
             return json_response_builder(
@@ -116,38 +219,33 @@ pub async fn setup_config(
         }
     };
 
-    // delete old cloned repo
-    let _ = execute_commande(&format!("rm -rf /etc/compo-doc/tmp/{}", &repo));
-
-    // Execute commande to clone repo inside machine
-    match execute_commande(&format!(
-        "cd /etc/compo-doc/tmp && git clone -b {} --single-branch {}",
-        &config.branch, &config.repo
-    )) {
-        Ok(r) => {
-            println!("repository clone successfully : {}", r)
-        }
+    let _ = match get_new_repo_ver(&config.repo, &branch, &username) {
+        Ok(r) => r,
         Err(err) => {
-            println!("Error occured while cloning repository : {}", err);
-
-            // REturn error ro user
+            println!("Error occured while cloning repo: {} ", err);
             return json_response_builder(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                JsonResponse::<String>::make_error(
-                    "Error occured while cloning repository, contact admin".to_string(),
-                ),
+                JsonResponse::<String>::make_error("Error while checking repo version".to_string()),
             );
         }
-    }
+    };
 
-    // let fetch_version = match execute_commande(&format!("git ls-remote {} {:?}", &repo, &branch)) {
-    //     Ok(v) => v.trim().split("refs").next().unwrap().to_string(),
-    //     Err(err) => {
-    //         print!("{}", err);
-    //     }
-    // };
+    let fetch_version =
+        match execute_commande(&format!("git ls-remote {} {:?}", &config.repo, &branch)) {
+            Ok(v) => v.trim().split("refs").next().unwrap().to_string(),
+            Err(err) => {
+                print!("{}", err);
+                return json_response_builder(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    JsonResponse::<String>::make_error(
+                        "Error while checking repo version".to_string(),
+                    ),
+                );
+            }
+        };
 
-    let mut ver = state.curr_ver;
+    shared_state.curr_ver = fetch_version;
+
     // Return success to user
     return json_response_builder(
         StatusCode::OK,

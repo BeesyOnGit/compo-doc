@@ -119,3 +119,28 @@ pub fn extract_repo_info(url: &str) -> Option<(&str, &str, &str)> {
 
     Some((username, repo, branche))
 }
+
+pub fn get_new_repo_ver(repo: &str, branch: &str, username: &str) -> Result<bool, String> {
+    let git_repo = format!("https://github.com/{username}/{repo}.git");
+
+    match execute_commande(&format!("rm -rf /etc/compo-doc/tmp/{}", &repo)) {
+        Ok(r) => r,
+        Err(err) => {
+            return Err(err);
+        }
+    };
+
+    // Execute commande to clone repo inside machine
+    match execute_commande(&format!(
+        "cd /etc/compo-doc/tmp && git clone -b {} --single-branch {}",
+        branch, git_repo
+    )) {
+        Ok(_r) => {
+            return Ok(true);
+        }
+        Err(err) => {
+            // REturn error ro user
+            return Err(err);
+        }
+    }
+}

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ComponentModel {
@@ -17,9 +17,11 @@ pub struct ConfigContent {
     pub branch: String,
 }
 
+pub type SharedState = Arc<RwLock<AppState>>;
+
 #[derive(Debug, Clone)]
 pub struct AppState {
-    pub comp_liste: Arc<Mutex<Vec<ComponentsList>>>,
+    pub comp_liste: Vec<ComponentsList>,
     pub curr_ver: String,
 }
 
