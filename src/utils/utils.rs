@@ -100,7 +100,7 @@ pub fn list_dir_contents(path: &str) -> Result<Vec<String>, bool> {
     return Ok(content);
 }
 
-pub fn extract_repo_info(url: &str) -> Option<(&str, &str)> {
+pub fn extract_repo_info(url: &str) -> Option<(&str, &str, &str)> {
     let parts: Vec<&str> = url.split('/').collect();
 
     // We need at least username and repo parts
@@ -109,11 +109,13 @@ pub fn extract_repo_info(url: &str) -> Option<(&str, &str)> {
     }
 
     // Get the last part (repo) and strip .git suffix
-    let repo = parts.last()?.strip_suffix(".git")?;
+    let repo = parts.get(parts.len() - 2)?.strip_suffix(".git")?;
 
     // The username should be second-to-last for standard GitHub URLs
     // Handle cases like "https://github.com/owner/repo.git"
-    let username = parts.get(parts.len() - 2)?;
+    let username = parts.get(parts.len() - 3)?;
 
-    Some((username, repo))
+    let branche = parts.last()?;
+
+    Some((username, repo, branche))
 }

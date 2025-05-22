@@ -1,5 +1,7 @@
 mod utils;
 
+use std::sync::Arc;
+
 use axum::{
     Json, Router,
     extract::Path,
@@ -8,9 +10,10 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use utils::{
     handler::{get_component, list_components, setup_config},
-    structs::ComponentsList,
+    structs::{AppState, ComponentsList},
     utils::{check_dir_exist_or_create, execute_commande},
 };
 
@@ -41,11 +44,12 @@ async fn main() {
     //     .init();
     // Create router
 
-    // varibale that will host our current git version hash
-    let mut current_head_ver = String::new();
+    // init app that that will store out branch current hash and the component state
 
-    // variable that will host le list of components we will be sending to the client
-    let mut components_liste: Vec<ComponentsList> = Vec::new();
+    let app_state = AppState {
+        comp_liste: Arc::new(Mutex::new(vec![])),
+        curr_ver: String::new(),
+    };
 
     check_dir_exist_or_create("/etc/compo-doc/config/rand.file");
     check_dir_exist_or_create("/etc/compo-doc/tmp/rand.file");
@@ -53,11 +57,13 @@ async fn main() {
     let app = Router::new()
         .route("/config", post(setup_config))
         .route("/components", get(list_components))
-        .route("/components/:id", get(get_component));
+        .route("/components/{id}", get(get_component))
+        .with_state(app_state);
 
     // Start server
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
     // tracing::info!("Server running on {}", listener.local_addr().unwrap());
+    println!("server listenig on port 3000");
     axum::serve(listener, app).await.unwrap();
 }

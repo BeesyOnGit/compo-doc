@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ComponentModel {
@@ -6,6 +9,18 @@ pub struct ComponentModel {
     pub comp_type: String,
     pub comp_code: String,
     pub is_legacy: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ConfigContent {
+    pub repo: String,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub comp_liste: Arc<Mutex<Vec<ComponentsList>>>,
+    pub curr_ver: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
