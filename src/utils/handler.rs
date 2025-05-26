@@ -1,7 +1,10 @@
 use axum::{Extension, Json, extract::Path, http::StatusCode, response::IntoResponse};
 
 use crate::utils::{
-    http_utils::json_response_builder, structs::JsonResponse, type_extractor::find_used_type,
+    code_merge::{get_imported_components, merge_recurse},
+    http_utils::json_response_builder,
+    structs::{ComponentModel, JsonResponse},
+    type_extractor::find_used_type,
 };
 
 use super::{
@@ -59,23 +62,29 @@ pub async fn list_components(state: Extension<SharedState>) -> impl IntoResponse
     println!("curr : {}", &state.curr_ver);
     println!("fetched : {}", &fetched_version);
 
-    if fetched_version != state.curr_ver {
-        let _ = match get_new_repo_ver(&repo, &branch, &username) {
-            Ok(r) => {
-                state.curr_ver = fetched_version;
-                r
-            }
-            Err(err) => {
-                println!("Error occured while cloning repo: {} ", err);
-                return json_response_builder(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    JsonResponse::<String>::make_error(
-                        "Error while checking repo version".to_string(),
-                    ),
-                );
-            }
-        };
+    if fetched_version == state.curr_ver {
+        return json_response_builder(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            JsonResponse::<Vec<ComponentsList>>::make_success(
+                "found components successfuly",
+                state.comp_liste.clone(),
+            ),
+        );
     }
+
+    let _ = match get_new_repo_ver(&repo, &branch, &username) {
+        Ok(r) => {
+            state.curr_ver = fetched_version;
+            r
+        }
+        Err(err) => {
+            println!("Error occured while cloning repo: {} ", err);
+            return json_response_builder(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                JsonResponse::<String>::make_error("Error while checking repo version".to_string()),
+            );
+        }
+    };
 
     let files_liste = match list_dir_contents(&holding_folder) {
         Ok(res) => res,
@@ -123,6 +132,8 @@ pub async fn list_components(state: Extension<SharedState>) -> impl IntoResponse
         // collecting the iterator into a vector (kind of Array)
         .collect();
 
+    state.comp_liste = final_liste.clone();
+
     // returnig the response
     return json_response_builder(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -147,7 +158,7 @@ pub async fn get_component(Path(id): Path<String>) -> impl IntoResponse {
         }
     };
 
-    let (username, repo, branch) = match extract_repo_info(&config_content) {
+    let (_username, repo, _branch) = match extract_repo_info(&config_content) {
         Some(res) => res,
         None => {
             return json_response_builder(
@@ -160,6 +171,14 @@ pub async fn get_component(Path(id): Path<String>) -> impl IntoResponse {
     let file_path = format!("/etc/compo-doc/tmp/{repo}/components/{id}");
     println!("{}", file_path);
 
+    let mut component_infos = ComponentModel {
+        name: String::new(),
+        type_name: String::new(),
+        comp_code: String::new(),
+        comp_type: String::new(),
+        is_legacy: false,
+    };
+
     let code = match read_from_file_ut(&file_path) {
         Ok(re) => re,
         Err(err) => {
@@ -170,14 +189,29 @@ pub async fn get_component(Path(id): Path<String>) -> impl IntoResponse {
             );
         }
     };
+
+    if code.contains("//<legacy") {
+        component_infos.is_legacy = true
+    }
+
     let type_name = find_used_type(&code).unwrap().unwrap();
+
     let mut extractor = TypeExtractor::new(&type_name);
     let typing = extractor.extract_from_str(&code).unwrap();
-    println!("{:?}", typing);
+
+    component_infos.type_name = type_name.clone();
+    component_infos.comp_type = type_name;
+
+    let cleared_imports = merge_recurse(&code, &repo);
+
+    component_infos.comp_code = cleared_imports;
 
     return json_response_builder(
         StatusCode::OK,
-        JsonResponse::<String>::make_success("repository saved and reached", typing.to_string()),
+        JsonResponse::<ComponentModel>::make_success(
+            "repository saved and reached",
+            component_infos,
+        ),
     );
 }
 

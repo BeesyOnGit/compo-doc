@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ComponentModel {
     pub name: String,
+    pub type_name: String,
     pub comp_type: String,
     pub comp_code: String,
     pub is_legacy: bool,

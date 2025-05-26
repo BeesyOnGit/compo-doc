@@ -1,9 +1,12 @@
 use std::{
+    collections::{HashMap, HashSet},
     fs::{OpenOptions, create_dir_all, read_dir, read_to_string},
     io::{Read, Write},
     path::Path,
     process::Command,
 };
+
+use regex::Regex;
 
 pub fn get_git_infos() -> () {}
 
@@ -143,4 +146,10 @@ pub fn get_new_repo_ver(repo: &str, branch: &str, username: &str) -> Result<bool
             return Err(err);
         }
     }
+}
+pub fn convert_hash<'a>(input: &'a HashMap<String, String>) -> HashMap<&'a str, &'a str> {
+    input
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect()
 }
